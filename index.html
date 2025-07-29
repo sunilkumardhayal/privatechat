@@ -1,0 +1,128 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+    getFirestore, 
+    collection, 
+    addDoc, 
+    query, 
+    onSnapshot, 
+    orderBy,
+    serverTimestamp
+} from 'firebase/firestore';
+
+// --- Firebase Configuration ---
+const firebaseConfig = typeof __firebase_config !== 'undefined' 
+    ? JSON.parse(__firebase_config) 
+    : { apiKey: "YOUR_API_KEY", authDomain: "YOUR_AUTH_DOMAIN", projectId: "YOUR_PROJECT_ID" };
+
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-simple-chat';
+
+// --- Initialize Firebase ---
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// --- Main App Component ---
+export default function App() {
+    const [messages, setMessages] = useState([]);
+    const [formValue, setFormValue] = useState('');
+    const [userId, setUserId] = useState(null);
+    const dummy = useRef();
+
+    // Generate a random user ID for the session
+    useEffect(() => {
+        setUserId(Math.random().toString(36).substring(2, 15));
+    }, []);
+
+    // Reference to the chat messages collection in Firestore
+    const messagesRef = collection(db, 'artifacts', appId, 'public', 'data', 'messages');
+
+    // Listen for new messages
+    useEffect(() => {
+        const q = query(messagesRef, orderBy('createdAt'));
+        const unsubscribe = onSnapshot(q, (querySnapshot) => {
+            const fetchedMessages = [];
+            querySnapshot.forEach((doc) => {
+                fetchedMessages.push({ ...doc.data(), id: doc.id });
+            });
+            // Client-side sort to ensure order
+            fetchedMessages.sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+            setMessages(fetchedMessages);
+        });
+
+        return () => unsubscribe();
+    }, []);
+
+    // Scroll to the bottom of the chat on new messages
+    useEffect(() => {
+        dummy.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [messages]);
+
+    // Send a new message
+    const sendMessage = async (e) => {
+        e.preventDefault();
+        if (formValue.trim() === '' || !userId) return;
+
+        await addDoc(messagesRef, {
+            text: formValue,
+            createdAt: serverTimestamp(),
+            uid: userId,
+        });
+
+        setFormValue('');
+    };
+
+    return (
+        <div className="bg-gray-100 flex flex-col h-screen font-sans">
+            {/* Header */}
+            <header className="bg-white p-4 text-gray-800 font-bold text-xl text-center shadow-md">
+                Simple Chat
+            </header>
+
+            {/* Message Area */}
+            <main className="flex-1 overflow-y-auto p-6 space-y-4">
+                {messages.map(msg => <ChatMessage key={msg.id} message={msg} currentUserId={userId} />)}
+                <div ref={dummy}></div>
+            </main>
+
+            {/* Input Form */}
+            <form onSubmit={sendMessage} className="flex items-center p-4 bg-white border-t border-gray-200">
+                <input
+                    value={formValue}
+                    onChange={(e) => setFormValue(e.target.value)}
+                    placeholder="Type your message..."
+                    className="flex-1 px-4 py-2 bg-gray-100 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button type="submit" disabled={!formValue} className="ml-4 px-6 py-2 bg-blue-500 text-white rounded-full font-semibold transition hover:bg-blue-600 disabled:bg-gray-400">
+                    Send
+                </button>
+            </form>
+        </div>
+    );
+}
+
+// --- Chat Message Component ---
+function ChatMessage({ message, currentUserId }) {
+    const { text, uid, createdAt } = message;
+    
+    // Determine if the message was sent by the current user
+    const isSentByCurrentUser = uid === currentUserId;
+
+    const sentStyle = "bg-blue-500 text-white self-end";
+    const receivedStyle = "bg-gray-200 text-gray-800 self-start";
+
+    const formatTimestamp = (timestamp) => {
+        if (!timestamp) return '';
+        return timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    };
+
+    return (
+        <div className={`flex flex-col ${isSentByCurrentUser ? 'items-end' : 'items-start'}`}>
+            <div className={`max-w-xs md:max-w-md px-4 py-2 rounded-2xl shadow ${isSentByCurrentUser ? sentStyle : receivedStyle}`}>
+                <p>{text}</p>
+            </div>
+            <span className="text-xs text-gray-400 mt-1 px-1">
+                {formatTimestamp(createdAt)}
+            </span>
+        </div>
+    );
+}
